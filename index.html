@@ -1157,7 +1157,7 @@ Respond ONLY with a valid JSON object in this exact format (no markdown, no extr
 Flags should be specific and actionable (e.g. 'Fog risk before 9am', 'Good conditions for outdoor plans', 'Pressure drop — watch for storms'). Include 2-4 flags. Use "warn" for things to watch out for, "good" for favorable conditions, "neutral" for informational.`;
 
   try {
-    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${cfg.geminiKey}`, {
+    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${cfg.geminiKey}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -1202,7 +1202,7 @@ function renderAIForecast(ai) {
     <div class="ai-flags">${flagsHtml}</div>
     <div class="ai-meta">
       Confidence: <span style="color:${confidenceColor}; font-weight:600;">${ai.confidence}</span> — ${ai.confidence_note} · 
-      Powered by Gemini 2.0 Flash · Based on ${stationHistory.length} station reading${stationHistory.length !== 1 ? 's' : ''}
+      Powered by Gemini 2.5 Flash · Based on ${stationHistory.length} station reading${stationHistory.length !== 1 ? 's' : ''}
     </div>`;
 }
 

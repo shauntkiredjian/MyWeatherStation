@@ -794,10 +794,13 @@
 
     <!-- AI Local Forecast -->
     <div class="card card-wide ai-card" draggable="true" data-id="ai-forecast" id="card-ai-forecast">
-      <div class="card-label">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a10 10 0 1 0 10 10"/><path d="M12 6v6l4 2"/><circle cx="18" cy="6" r="3" fill="currentColor" stroke="none" opacity="0.5"/></svg>
-        AI Local Forecast
-        <span class="ai-badge">✦ Gemini</span>
+      <div class="card-label" style="justify-content:space-between;">
+        <span style="display:flex;align-items:center;gap:6px;">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a10 10 0 1 0 10 10"/><path d="M12 6v6l4 2"/><circle cx="18" cy="6" r="3" fill="currentColor" stroke="none" opacity="0.5"/></svg>
+          AI Local Forecast
+          <span class="ai-badge">✦ Gemini</span>
+        </span>
+        <button id="ai-refresh-btn" onclick="manualAIRefresh()" style="background:none;border:none;cursor:pointer;font-size:0.72rem;color:var(--text-faint);font-family:'Inter',sans-serif;padding:0;letter-spacing:0.02em;transition:color 0.15s;" onmouseover="this.style.color='var(--accent)'" onmouseout="this.style.color='var(--text-faint)'">↻ refresh forecast</button>
       </div>
       <div id="ai-forecast-body">
         <div class="ai-thinking">
@@ -858,9 +861,11 @@ const cfg = {
 
 let latestData = null;
 let pressureHistory = [];
-let stationHistory = []; // rolling buffer of recent observations for AI context
-let lastForecastData = null; // Open-Meteo daily data for AI context
+let stationHistory = [];
+let lastForecastData = null;
+let lastForecastHourly = null;
 let fetchInterval = null;
+let aiHasLoaded = false; // only auto-run AI on first page load
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
 function init() {
@@ -972,8 +977,21 @@ function updateGeminiKey() {
   cfg.geminiKey = document.getElementById('settings-gemini').value.trim();
   saveConfig();
   if (cfg.geminiKey && latestData && lastForecastData) {
-    fetchAIForecast(latestData, lastForecastData);
+    aiHasLoaded = true;
+    fetchAIForecast(latestData, lastForecastData, lastForecastHourly);
   } else if (cfg.geminiKey) {
+    fetchWeather();
+  }
+}
+
+function manualAIRefresh() {
+  if (!cfg.geminiKey) {
+    toggleSettings();
+    return;
+  }
+  if (latestData && lastForecastData) {
+    fetchAIForecast(latestData, lastForecastData, lastForecastHourly);
+  } else {
     fetchWeather();
   }
 }
@@ -1067,10 +1085,12 @@ async function fetchForecast(lat, lon) {
     const res = await fetch(url);
     const json = await res.json();
     lastForecastData = json.daily;
+    lastForecastHourly = json.hourly;
     renderForecast(json.daily);
 
-    // Trigger AI once we have both station data and forecast
-    if (cfg.geminiKey && stationHistory.length > 0) {
+    // Only auto-trigger AI on first page load, not on every 5-min WU refresh
+    if (cfg.geminiKey && stationHistory.length > 0 && !aiHasLoaded) {
+      aiHasLoaded = true;
       fetchAIForecast(latestData, json.daily, json.hourly);
     }
   } catch(e) {
@@ -1457,7 +1477,17 @@ function drawCompass(deg) {
 }
 
 // ─── Drag & drop ─────────────────────────────────────────────────────────────
+function restoreCardOrder() {
+  if (!cfg.cardOrder || cfg.cardOrder.length === 0) return;
+  const grid = document.getElementById('grid');
+  cfg.cardOrder.forEach(id => {
+    const card = document.getElementById(`card-${id}`);
+    if (card) grid.appendChild(card);
+  });
+}
+
 function initDrag() {
+  restoreCardOrder();
   const grid = document.getElementById('grid');
   let dragged = null;
 

@@ -1142,17 +1142,22 @@ ${dailySummary}
 YOUR TASK:
 Using the station's actual microclimate data (especially pressure trend, dew point spread, humidity trajectory, and any precip rate) alongside the grid forecast, produce a hyperlocal forecast. Note where your station's readings suggest the grid forecast may be over- or under-estimating conditions for this specific location.
 
-Respond ONLY with a valid JSON object in this exact format (no markdown, no extra text):
+Respond ONLY with a valid JSON object — no markdown, no code fences, no extra text before or after. Keep all string values concise:
 {
   "headline": "One punchy sentence, max 12 words",
   "summary": "2-3 sentences max. Reference specific station readings. Note where station data diverges from grid forecast.",
   "tomorrow": "1 sentence about tomorrow.",
-  "flags": [{ "text": "max 5 words", "type": "warn|good|neutral" }],
+  "flags": [
+    { "text": "max 5 words", "type": "warn|good|neutral" }
+  ],
+  "confidence": "high|medium|low",
   "confidence_note": "One short sentence."
-  2-4 flags only. warn=watch out, good=favorable, neutral=info.
-  
+}
+
+2-4 flags only. warn=watch out, good=favorable, neutral=info.`;
+
   try {
-    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${cfg.geminiKey}`, {
+    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=${cfg.geminiKey}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -1170,13 +1175,13 @@ Respond ONLY with a valid JSON object in this exact format (no markdown, no extr
     const raw = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
 
     // Extract JSON robustly — find the first { and last } in the response
-   const start = raw.indexOf('{');
-   const end = raw.lastIndexOf('}');
-   if (start === -1 || end === -1 || end <= start) {
-     throw new Error('Could not parse AI response — no valid JSON found.');
-   }
-   const clean = raw.slice(start, end + 1);
-   const ai = JSON.parse(clean);
+    const start = raw.indexOf('{');
+    const end = raw.lastIndexOf('}');
+    if (start === -1 || end === -1 || end <= start) {
+      throw new Error('Could not parse AI response — no valid JSON found.');
+    }
+    const clean = raw.slice(start, end + 1);
+    const ai = JSON.parse(clean);
 
     renderAIForecast(ai);
   } catch(e) {
@@ -1202,7 +1207,7 @@ function renderAIForecast(ai) {
     <div class="ai-flags">${flagsHtml}</div>
     <div class="ai-meta">
       Confidence: <span style="color:${confidenceColor}; font-weight:600;">${ai.confidence}</span> — ${ai.confidence_note} · 
-      Powered by Gemini 2.5 Flash · Based on ${stationHistory.length} station reading${stationHistory.length !== 1 ? 's' : ''}
+      Powered by Gemini 2.5 Flash Lite · Based on ${stationHistory.length} station reading${stationHistory.length !== 1 ? 's' : ''}
     </div>`;
 }
 

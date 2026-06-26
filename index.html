@@ -1113,7 +1113,7 @@ async function callGemini(prompt, modelIndex = 0, isRetry = false) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       contents: [{ parts: [{ text: prompt }] }],
-      generationConfig: { temperature: 0.4, maxOutputTokens: 1200 }
+      generationConfig: { temperature: 0.4, maxOutputTokens: 1800 }
     })
   });
 
@@ -1222,18 +1222,51 @@ Respond ONLY with a valid JSON object — no markdown, no code fences, no extra 
   try {
     const { raw, model } = await callGemini(prompt);
 
-    // Log raw response to console for debugging
     console.log('[AI Forecast] Model:', model);
     console.log('[AI Forecast] Raw response:', raw);
 
-    const start = raw.indexOf('{');
-    const end = raw.lastIndexOf('}');
-    if (start === -1 || end === -1 || end <= start) {
-      // Show the actual response in the error so we can see what came back
-      const preview = raw.length > 200 ? raw.slice(0, 200) + '…' : (raw || '(empty response)');
-      throw new Error(`No valid JSON in response. Gemini said: "${preview}"`);
+    // Strip markdown fences and surrounding quotes Gemini sometimes adds
+    const cleaned = raw.replace(/```json|```/gi, '').replace(/^["']|["']$/g, '').trim();
+
+    const start = cleaned.indexOf('{');
+    if (start === -1) {
+      const preview = cleaned.length > 200 ? cleaned.slice(0, 200) + '…' : (cleaned || '(empty response)');
+      throw new Error(`No JSON found. Gemini said: "${preview}"`);
     }
-    const ai = JSON.parse(raw.slice(start, end + 1));
+
+    // Try parsing as-is first
+    let ai = null;
+    const slice = cleaned.slice(start);
+    try {
+      ai = JSON.parse(slice);
+    } catch(parseErr) {
+      // Response was truncated — find the last complete field and close the JSON manually
+      // Extract whatever fields we can using regex
+      const extract = (key) => {
+        const m = slice.match(new RegExp(`"${key}"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)"`));
+        return m ? m[1] : null;
+      };
+      const extractArr = (key) => {
+        const m = slice.match(new RegExp(`"${key}"\\s*:\\s*(\\[.*?\\])`, 's'));
+        try { return m ? JSON.parse(m[1]) : []; } catch { return []; }
+      };
+
+      ai = {
+        headline: extract('headline') || 'Forecast temporarily unavailable',
+        summary: extract('summary') || 'Response was truncated. Try refreshing.',
+        tomorrow: extract('tomorrow') || '–',
+        flags: extractArr('flags'),
+        confidence: extract('confidence') || 'low',
+        confidence_note: extract('confidence_note') || 'Partial response received.'
+      };
+
+      // If we couldn't get even a headline, bail
+      if (!extract('headline') && !extract('summary')) {
+        const preview = cleaned.length > 200 ? cleaned.slice(0, 200) + '…' : cleaned;
+        throw new Error(`Could not parse response. Gemini said: "${preview}"`);
+      }
+    }
+
     renderAIForecast(ai, model);
 
   } catch(e) {

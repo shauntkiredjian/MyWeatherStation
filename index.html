@@ -1099,6 +1099,52 @@ async function fetchForecast(lat, lon) {
 }
 
 // ─── AI Forecast (Gemini) ─────────────────────────────────────────────────────
+const GEMINI_MODELS = ['gemini-2.5-flash', 'gemini-2.5-flash-lite'];
+
+function isOverloadError(msg) {
+  return msg.includes('high demand') || msg.includes('overloaded') ||
+         msg.includes('503') || msg.includes('429') || msg.includes('RESOURCE_EXHAUSTED');
+}
+
+async function callGemini(prompt, modelIndex = 0, isRetry = false) {
+  const model = GEMINI_MODELS[modelIndex];
+  const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${cfg.geminiKey}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      contents: [{ parts: [{ text: prompt }] }],
+      generationConfig: { temperature: 0.4, maxOutputTokens: 1200 }
+    })
+  });
+
+  if (!res.ok) {
+    const errJson = await res.json().catch(() => ({}));
+    const msg = errJson?.error?.message || `Gemini API error ${res.status}`;
+
+    // Try next model in the list before giving up
+    if (isOverloadError(msg) && modelIndex < GEMINI_MODELS.length - 1) {
+      return callGemini(prompt, modelIndex + 1, isRetry);
+    }
+
+    // On overload with last model, retry once after 15s (unless already a retry)
+    if (isOverloadError(msg) && !isRetry) {
+      const body = document.getElementById('ai-forecast-body');
+      body.innerHTML = `<div class="ai-thinking">
+        <div class="ai-thinking-dots"><span></span><span></span><span></span></div>
+        Gemini is busy — retrying in 15 seconds…
+      </div>`;
+      await new Promise(r => setTimeout(r, 15000));
+      return callGemini(prompt, 0, true); // restart from top model
+    }
+
+    throw new Error(msg);
+  }
+
+  const data = await res.json();
+  const raw = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+  return { raw, model };
+}
+
 async function fetchAIForecast(currentObs, forecastDaily, forecastHourly) {
   if (!cfg.geminiKey) return;
 
@@ -1120,12 +1166,10 @@ async function fetchAIForecast(currentObs, forecastDaily, forecastHourly) {
     else if (diff < -0.05) pressureTrend = `falling (${diff.toFixed(2)} inHg over last ${pressureHistory.length} readings)`;
   }
 
-  // Summarize last hour of station readings
   const historyStr = stationHistory.map(h =>
     `  ${h.time}: ${h.tempF}${tUnit}, humidity ${h.humidity}%, pressure ${h.pressureInHg} inHg, wind ${h.windMph}${sUnit} from ${degToCompass(h.windDir)}, rain rate ${h.precipRateIn} ${rUnit}/hr, UV ${h.uv}`
   ).join('\n');
 
-  // Next 24hr hourly forecast summary
   const now = new Date();
   const next24 = forecastHourly ? forecastHourly.time
     .map((t, i) => ({ t, temp: forecastHourly.temperature_2m[i], precip: forecastHourly.precipitation_probability[i], code: forecastHourly.weathercode[i] }))
@@ -1133,7 +1177,6 @@ async function fetchAIForecast(currentObs, forecastDaily, forecastHourly) {
     .map(h => `  ${new Date(h.t).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}: ${Math.round(h.temp)}${tUnit}, ${h.precip}% precip chance`)
     .join('\n') : 'unavailable';
 
-  // 7-day daily summary
   const dailySummary = forecastDaily.time.slice(0,7).map((d, i) => {
     const dayName = i === 0 ? 'Today' : new Date(d + 'T12:00:00').toLocaleDateString('en-US', {weekday:'short', month:'short', day:'numeric'});
     return `  ${dayName}: High ${Math.round(forecastDaily.temperature_2m_max[i])}${tUnit}, Low ${Math.round(forecastDaily.temperature_2m_min[i])}${tUnit}, Rain ${forecastDaily.precipitation_sum[i].toFixed(2)}${rUnit}, Max precip prob ${forecastDaily.precipitation_probability_max?.[i] ?? '?'}%`;
@@ -1177,46 +1220,32 @@ Respond ONLY with a valid JSON object — no markdown, no code fences, no extra 
 2-4 flags only. warn=watch out, good=favorable, neutral=info.`;
 
   try {
-    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=${cfg.geminiKey}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: { temperature: 0.4, maxOutputTokens: 1200 }
-      })
-    });
+    const { raw, model } = await callGemini(prompt);
 
-    if (!res.ok) {
-      const errJson = await res.json().catch(() => ({}));
-      throw new Error(errJson?.error?.message || `Gemini API error ${res.status}`);
-    }
-
-    const data = await res.json();
-    const raw = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
-
-    // Extract JSON robustly — find the first { and last } in the response
     const start = raw.indexOf('{');
     const end = raw.lastIndexOf('}');
     if (start === -1 || end === -1 || end <= start) {
       throw new Error('Could not parse AI response — no valid JSON found.');
     }
-    const clean = raw.slice(start, end + 1);
-    const ai = JSON.parse(clean);
+    const ai = JSON.parse(raw.slice(start, end + 1));
+    renderAIForecast(ai, model);
 
-    renderAIForecast(ai);
   } catch(e) {
+    const isKeyError = e.message.includes('API_KEY') || e.message.includes('401') || e.message.includes('403');
     body.innerHTML = `<div style="font-size:0.82rem; color:var(--text-muted); padding:0.25rem 0;">
       ⚠ AI forecast unavailable: ${e.message}
-      ${e.message.includes('API_KEY') || e.message.includes('401') ? '<br><span style="font-size:0.75rem;">Check your Gemini API key in Settings.</span>' : ''}
+      ${isKeyError ? '<br><span style="font-size:0.75rem;">Check your Gemini API key in Settings.</span>' : ''}
+      ${isOverloadError(e.message) ? '<br><span style="font-size:0.75rem;">Gemini is under heavy load. Try clicking ↻ refresh forecast in a few minutes.</span>' : ''}
     </div>`;
   }
 }
 
-function renderAIForecast(ai) {
+function renderAIForecast(ai, model) {
   const confidenceColor = ai.confidence === 'high' ? 'var(--accent)' : ai.confidence === 'medium' ? '#f59e0b' : '#9ca3af';
   const flagsHtml = (ai.flags || []).map(f =>
     `<span class="ai-flag ${f.type === 'warn' ? 'warn' : f.type === 'good' ? 'good' : ''}">${f.text}</span>`
   ).join('');
+  const modelLabel = model || 'Gemini';
 
   document.getElementById('ai-forecast-body').innerHTML = `
     <div class="ai-summary"><strong>${ai.headline}</strong></div>
@@ -1226,8 +1255,8 @@ function renderAIForecast(ai) {
     </div>
     <div class="ai-flags">${flagsHtml}</div>
     <div class="ai-meta">
-      Confidence: <span style="color:${confidenceColor}; font-weight:600;">${ai.confidence}</span> — ${ai.confidence_note} · 
-      Powered by Gemini 2.5 Flash Lite · Based on ${stationHistory.length} station reading${stationHistory.length !== 1 ? 's' : ''}
+      Confidence: <span style="color:${confidenceColor}; font-weight:600;">${ai.confidence}</span> — ${ai.confidence_note} ·
+      ${modelLabel} · ${stationHistory.length} station reading${stationHistory.length !== 1 ? 's' : ''}
     </div>`;
 }
 

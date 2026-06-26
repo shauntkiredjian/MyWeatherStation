@@ -1144,25 +1144,20 @@ Using the station's actual microclimate data (especially pressure trend, dew poi
 
 Respond ONLY with a valid JSON object in this exact format (no markdown, no extra text):
 {
-  "headline": "One punchy sentence about the next 12-24 hours (max 15 words)",
-  "summary": "2-3 sentences of hyperlocal narrative. Reference specific station readings. Be conversational but precise. Mention if station data corroborates or diverges from the grid forecast.",
-  "tomorrow": "1-2 sentences specifically about tomorrow based on the 7-day data.",
-  "flags": [
-    { "text": "flag text max 6 words", "type": "warn|good|neutral" }
-  ],
-  "confidence": "high|medium|low",
-  "confidence_note": "One short sentence explaining confidence level"
-}
-
-Flags should be specific and actionable (e.g. 'Fog risk before 9am', 'Good conditions for outdoor plans', 'Pressure drop — watch for storms'). Include 2-4 flags. Use "warn" for things to watch out for, "good" for favorable conditions, "neutral" for informational.`;
-
+  "headline": "One punchy sentence, max 12 words",
+  "summary": "2-3 sentences max. Reference specific station readings. Note where station data diverges from grid forecast.",
+  "tomorrow": "1 sentence about tomorrow.",
+  "flags": [{ "text": "max 5 words", "type": "warn|good|neutral" }],
+  "confidence_note": "One short sentence."
+  2-4 flags only. warn=watch out, good=favorable, neutral=info.
+  
   try {
     const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${cfg.geminiKey}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: { temperature: 0.4, maxOutputTokens: 600 }
+        generationConfig: { temperature: 0.4, maxOutputTokens: 1200 }
       })
     });
 
@@ -1174,9 +1169,14 @@ Flags should be specific and actionable (e.g. 'Fog risk before 9am', 'Good condi
     const data = await res.json();
     const raw = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
 
-    // Strip any accidental markdown fences
-    const clean = raw.replace(/```json|```/gi, '').trim();
-    const ai = JSON.parse(clean);
+    // Extract JSON robustly — find the first { and last } in the response
+   const start = raw.indexOf('{');
+   const end = raw.lastIndexOf('}');
+   if (start === -1 || end === -1 || end <= start) {
+     throw new Error('Could not parse AI response — no valid JSON found.');
+   }
+   const clean = raw.slice(start, end + 1);
+   const ai = JSON.parse(clean);
 
     renderAIForecast(ai);
   } catch(e) {
